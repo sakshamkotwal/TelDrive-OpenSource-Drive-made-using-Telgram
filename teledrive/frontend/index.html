@@ -2,149 +2,261 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Teledrive</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <style>
-        .fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
-        .fade-enter-from, .fade-leave-to { opacity: 0; }
-    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
 </head>
-<body class="bg-gray-50 text-gray-900 min-h-screen">
-    <div id="app" class="container mx-auto p-4">
-        <!-- Setup / Login Screen -->
-        <div v-if="!session.ready" class="max-w-md mx-auto mt-20 bg-white p-8 rounded-lg shadow-lg">
-            <h1 class="text-3xl font-bold mb-6 text-blue-600 text-center">Teledrive</h1>
+<body class="bg-[#131314] text-[#e3e3e3]">
+    <div id="app" class="h-screen flex flex-col">
 
-            <!-- Step 1: Channel ID -->
-            <div v-if="step === 1">
-                <p class="mb-4 text-gray-600">Enter your Private Channel ID to access your drive.</p>
-                <div class="mb-4">
-                    <label class="block text-sm font-bold mb-2">Channel ID</label>
-                    <input v-model="form.channelId" type="text" placeholder="-100..." class="w-full p-2 border rounded">
-                    <p class="text-xs text-gray-400 mt-1">Check the README on how to get this ID.</p>
+        <!-- ================= Login / Setup Screen ================= -->
+        <div v-if="!session.ready" class="flex-1 flex flex-col justify-center items-center p-6 bg-[#131314]">
+            <div class="w-full max-w-md bg-[#1e1e1e] p-8 rounded-2xl shadow-xl">
+                <div class="flex justify-center mb-6">
+                    <div class="w-16 h-16 bg-[#2d2f31] rounded-full flex items-center justify-center">
+                        <i class="fas fa-cloud text-3xl text-blue-400"></i>
+                    </div>
                 </div>
-                <button @click="verifyChannel" class="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700" :disabled="loading">
-                    <span v-if="loading"><i class="fas fa-spinner fa-spin"></i> Verifying...</span>
-                    <span v-else>Next</span>
-                </button>
-            </div>
+                <h1 class="text-2xl font-normal text-center mb-2">Welcome to Teledrive</h1>
+                <p class="text-center text-[#c4c7c5] mb-8 text-sm">Secure, self-hosted cloud storage on Telegram.</p>
 
-            <!-- Step 2: Password -->
-            <div v-if="step === 2">
-                <p class="mb-4 text-gray-600">Enter your drive password.</p>
-                <div class="mb-4">
-                    <label class="block text-sm font-bold mb-2">Password</label>
-                    <input v-model="form.password" type="password" class="w-full p-2 border rounded" @keyup.enter="login">
+                <!-- Step 1: Channel ID -->
+                <div v-if="step === 1">
+                    <label class="block text-xs font-medium text-[#a8c7fa] mb-2 uppercase tracking-wider">Channel ID</label>
+                    <input v-model="form.channelId" type="text" placeholder="-100..."
+                           class="w-full bg-[#2d2f31] text-white p-3 rounded-lg border border-transparent focus:border-[#a8c7fa] focus:outline-none mb-4 transition">
+                    <button @click="verifyChannel" class="w-full bg-[#a8c7fa] text-[#062e6f] font-medium p-3 rounded-full hover:opacity-90 transition" :disabled="loading">
+                        <span v-if="loading"><i class="fas fa-spinner fa-spin"></i> Verifying...</span>
+                        <span v-else>Continue</span>
+                    </button>
+                    <div class="mt-4 text-center">
+                        <a href="#" class="text-xs text-[#c4c7c5] hover:text-white">How do I get an ID?</a>
+                    </div>
                 </div>
-                <button @click="login" class="w-full bg-green-600 text-white p-2 rounded hover:bg-green-700" :disabled="loading">
-                    <span v-if="loading"><i class="fas fa-spinner fa-spin"></i> Unlocking...</span>
-                    <span v-else>Unlock Drive</span>
-                </button>
-            </div>
 
-            <div v-if="error" class="mt-4 text-red-500 text-sm">{{ error }}</div>
+                <!-- Step 2: Password -->
+                <div v-if="step === 2">
+                    <label class="block text-xs font-medium text-[#a8c7fa] mb-2 uppercase tracking-wider">Password</label>
+                    <input v-model="form.password" type="password" placeholder="Enter your password"
+                           class="w-full bg-[#2d2f31] text-white p-3 rounded-lg border border-transparent focus:border-[#a8c7fa] focus:outline-none mb-4 transition" @keyup.enter="login">
+                    <button @click="login" class="w-full bg-[#a8c7fa] text-[#062e6f] font-medium p-3 rounded-full hover:opacity-90 transition" :disabled="loading">
+                        <span v-if="loading"><i class="fas fa-spinner fa-spin"></i> Unlocking...</span>
+                        <span v-else>Unlock Drive</span>
+                    </button>
+                    <button @click="logout" class="w-full mt-3 text-[#c4c7c5] text-sm py-2">Switch Account</button>
+                </div>
+
+                <div v-if="error" class="mt-4 p-3 bg-red-900/30 text-red-200 text-sm rounded-lg text-center border border-red-800/50">{{ error }}</div>
+            </div>
         </div>
 
-        <!-- Main Drive Interface -->
-        <div v-else class="bg-white rounded-lg shadow-lg min-h-[80vh] flex flex-col">
-            <!-- Header -->
-            <div class="p-4 border-b flex justify-between items-center bg-gray-50 rounded-t-lg">
-                <div class="flex items-center space-x-2">
-                    <i class="fas fa-cloud text-blue-600 text-xl"></i>
-                    <span class="font-bold text-lg">Teledrive</span>
+        <!-- ================= Main Drive Interface ================= -->
+        <div v-else class="flex-1 flex flex-col h-full overflow-hidden relative">
+
+            <!-- 1. Header & Search -->
+            <div class="px-4 pt-4 pb-2 sticky top-0 bg-[#131314] z-10">
+                <div class="search-bar flex justify-between items-center shadow-md">
+                    <i class="fas fa-bars text-[#e3e3e3] text-lg mr-4 cursor-pointer"></i>
+                    <input v-model="searchQuery" type="text" placeholder="Search in Drive"
+                           class="bg-transparent border-none outline-none text-[#e3e3e3] flex-1 text-base placeholder-gray-500">
+                    <div class="w-8 h-8 rounded-full bg-green-700 flex items-center justify-center text-white text-sm font-bold ml-2">S</div>
                 </div>
-                <div class="flex items-center space-x-4">
-                    <div class="relative">
-                        <input v-model="searchQuery" type="text" placeholder="Search files..." class="pl-8 pr-4 py-1 border rounded-full text-sm">
-                        <i class="fas fa-search absolute left-3 top-2 text-gray-400 text-xs"></i>
+            </div>
+
+            <!-- 2. Tabs (My Drive / Computers) -->
+            <div class="px-4 pb-2 flex space-x-6 border-b border-[#2d2f31] bg-[#131314]">
+                <button class="text-sm font-medium pb-2 border-b-2 border-[#a8c7fa] text-[#a8c7fa]">My Drive</button>
+                <button class="text-sm font-medium pb-2 border-b-2 border-transparent text-[#c4c7c5]">Computers</button>
+            </div>
+
+            <!-- 3. Sort & Filter Bar -->
+            <div class="px-4 py-3 flex justify-between items-center bg-[#131314]">
+                <div class="flex items-center space-x-1 cursor-pointer" @click="toggleSort">
+                    <span class="text-sm text-[#e3e3e3]">Name</span>
+                    <i class="fas fa-arrow-up text-xs text-[#e3e3e3]"></i>
+                </div>
+                <div class="flex items-center space-x-4 text-[#e3e3e3]">
+                    <i class="fas fa-list"></i>
+                    <!-- <i class="fas fa-th-large text-[#c4c7c5]"></i> -->
+                </div>
+            </div>
+
+            <!-- 4. Breadcrumbs (Simplified) -->
+            <div v-if="breadcrumbs.length > 0" class="px-4 py-1 bg-[#131314] flex items-center space-x-2 text-sm text-[#c4c7c5] overflow-x-auto whitespace-nowrap">
+                <button @click="navigate(null)" class="hover:text-white"><i class="fas fa-home"></i></button>
+                <span v-for="(folder, index) in breadcrumbs" :key="folder.id" class="flex items-center">
+                    <span class="mx-1">/</span>
+                    <button @click="navigate(folder.id)" class="hover:text-white font-medium text-[#e3e3e3]">{{ folder.name }}</button>
+                </span>
+            </div>
+
+            <!-- 5. Content Area (List) -->
+            <div class="flex-1 overflow-y-auto pb-24 bg-[#131314]">
+
+                <!-- Loading State -->
+                <div v-if="loadingFiles" class="flex justify-center pt-20">
+                    <i class="fas fa-circle-notch fa-spin text-3xl text-[#a8c7fa]"></i>
+                </div>
+
+                <!-- Empty State -->
+                <div v-else-if="filteredItems.length === 0" class="flex flex-col items-center justify-center pt-20 text-[#c4c7c5]">
+                    <div class="w-32 h-32 bg-[#1e1e1e] rounded-full flex items-center justify-center mb-4">
+                        <i class="fas fa-folder-open text-4xl opacity-50"></i>
                     </div>
-                    <button @click="logout" class="text-gray-500 hover:text-red-500"><i class="fas fa-sign-out-alt"></i></button>
-                </div>
-            </div>
-
-            <!-- Toolbar & Breadcrumbs -->
-            <div class="p-4 border-b flex justify-between items-center">
-                <div class="flex items-center space-x-2 text-sm text-gray-600">
-                    <button @click="navigate(null)" class="hover:text-blue-600"><i class="fas fa-home"></i> Home</button>
-                    <template v-for="(folder, index) in breadcrumbs" :key="folder.id">
-                        <span>/</span>
-                        <button @click="navigate(folder.id)" class="hover:text-blue-600">{{ folder.name }}</button>
-                    </template>
-                </div>
-                <div class="flex space-x-2">
-                    <button @click="showCreateFolder = true" class="px-3 py-1 border rounded hover:bg-gray-100 text-sm">
-                        <i class="fas fa-folder-plus"></i> New Folder
-                    </button>
-                    <label class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm cursor-pointer">
-                        <i class="fas fa-upload"></i> Upload
-                        <input type="file" class="hidden" @change="handleUpload" multiple>
-                    </label>
-                </div>
-            </div>
-
-            <!-- File List -->
-            <div class="flex-1 p-4 overflow-auto">
-                <div v-if="loadingFiles" class="text-center py-10 text-gray-400">
-                    <i class="fas fa-spinner fa-spin fa-2x"></i>
+                    <p>No files here</p>
                 </div>
 
-                <div v-else-if="filteredItems.length === 0" class="text-center py-20 text-gray-400">
-                    <i class="fas fa-folder-open fa-3x mb-4"></i>
-                    <p>This folder is empty</p>
-                </div>
-
-                <div v-else class="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                <!-- Items List -->
+                <div v-else>
                     <!-- Folders -->
                     <div v-for="folder in filteredFolders" :key="folder.id"
                          @click="navigate(folder.id)"
-                         class="p-4 border rounded hover:bg-blue-50 cursor-pointer flex flex-col items-center justify-center text-center transition">
-                        <i class="fas fa-folder text-yellow-400 text-4xl mb-2"></i>
-                        <span class="text-sm font-medium truncate w-full">{{ folder.name }}</span>
-                        <div class="mt-2 opacity-0 hover:opacity-100 group-hover:opacity-100">
-                             <button @click.stop="deleteItem(folder.id)" class="text-red-400 hover:text-red-600"><i class="fas fa-trash"></i></button>
+                         class="file-item hover:bg-[#1e1e1e] active:bg-[#2d2f31] cursor-pointer group">
+                        <div class="file-icon-wrapper">
+                            <i class="fas fa-folder text-[#e8eaed] text-2xl"></i>
+                        </div>
+                        <div class="file-info">
+                            <div class="file-name">{{ folder.name }}</div>
+                            <div class="file-meta">Folder</div>
+                        </div>
+                        <div class="text-[#c4c7c5]">
+                            <button @click.stop="showItemOptions(folder)" class="p-2"><i class="fas fa-ellipsis-v"></i></button>
                         </div>
                     </div>
 
                     <!-- Files -->
                     <div v-for="file in filteredFiles" :key="file.id"
-                         class="p-4 border rounded hover:bg-gray-50 flex flex-col items-center justify-center text-center relative group">
-                        <i :class="getFileIcon(file.name)" class="text-4xl mb-2"></i>
-                        <span class="text-sm font-medium truncate w-full">{{ file.name }}</span>
-                        <span class="text-xs text-gray-400">{{ formatSize(file.size) }}</span>
-
-                        <div class="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition">
-                            <button @click="downloadFile(file)" class="text-blue-500 hover:text-blue-700 bg-white rounded-full p-1 shadow"><i class="fas fa-download"></i></button>
-                            <button @click="deleteItem(file.id)" class="text-red-500 hover:text-red-700 bg-white rounded-full p-1 shadow"><i class="fas fa-trash"></i></button>
+                         @click="previewFile(file)"
+                         class="file-item hover:bg-[#1e1e1e] active:bg-[#2d2f31] cursor-pointer group">
+                        <div class="file-icon-wrapper">
+                            <i :class="getFileIcon(file.name)" class="text-2xl"></i>
+                        </div>
+                        <div class="file-info">
+                            <div class="file-name">{{ file.name }}</div>
+                            <div class="file-meta">
+                                {{ formatSize(file.size) }} • {{ formatDate(file.created_at) }}
+                            </div>
+                        </div>
+                        <div class="text-[#c4c7c5]">
+                             <button @click.stop="showItemOptions(file)" class="p-2"><i class="fas fa-ellipsis-v"></i></button>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Upload Progress -->
-            <div v-if="uploading" class="fixed bottom-4 right-4 bg-white p-4 rounded shadow-lg border w-80">
-                <div class="flex justify-between mb-2">
-                    <span class="font-bold text-sm">Uploading...</span>
-                    <span class="text-sm">{{ uploadProgress }}%</span>
-                </div>
-                <div class="w-full bg-gray-200 rounded-full h-2.5">
-                    <div class="bg-blue-600 h-2.5 rounded-full" :style="{ width: uploadProgress + '%' }"></div>
-                </div>
+            <!-- 6. Floating Action Button -->
+            <div class="fab" @click="showUploadMenu = !showUploadMenu">
+                <i class="fas fa-plus text-2xl"></i>
             </div>
-        </div>
 
-        <!-- Create Folder Modal -->
-        <div v-if="showCreateFolder" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-            <div class="bg-white p-6 rounded shadow-lg w-80">
-                <h3 class="font-bold mb-4">New Folder</h3>
-                <input v-model="newFolderName" type="text" class="w-full border p-2 rounded mb-4" placeholder="Folder Name" @keyup.enter="createFolder">
-                <div class="flex justify-end space-x-2">
-                    <button @click="showCreateFolder = false" class="px-4 py-2 text-gray-600">Cancel</button>
-                    <button @click="createFolder" class="px-4 py-2 bg-blue-600 text-white rounded">Create</button>
+            <!-- Upload/Action Menu (Popup) -->
+            <div v-if="showUploadMenu" class="fixed inset-0 z-50 flex items-end justify-center bg-black/50" @click.self="showUploadMenu = false">
+                <div class="bg-[#1e1e1e] w-full max-w-sm mb-24 mx-4 rounded-2xl p-4 shadow-2xl animate-slide-up">
+                    <div class="grid grid-cols-3 gap-4 text-center">
+                        <label class="flex flex-col items-center p-2 cursor-pointer active:bg-[#2d2f31] rounded-lg">
+                            <div class="w-12 h-12 rounded-full border border-[#444] flex items-center justify-center mb-2">
+                                <i class="fas fa-folder text-[#e8eaed] text-lg"></i>
+                            </div>
+                            <span class="text-xs">Folder</span>
+                            <button @click="showCreateFolderModal" class="absolute inset-0 opacity-0"></button>
+                        </label>
+                        <label class="flex flex-col items-center p-2 cursor-pointer active:bg-[#2d2f31] rounded-lg">
+                            <div class="w-12 h-12 rounded-full border border-[#444] flex items-center justify-center mb-2">
+                                <i class="fas fa-upload text-[#a8c7fa] text-lg"></i>
+                            </div>
+                            <span class="text-xs">Upload</span>
+                            <input type="file" class="hidden" @change="handleUpload" multiple>
+                        </label>
+                        <label class="flex flex-col items-center p-2 cursor-pointer active:bg-[#2d2f31] rounded-lg">
+                             <div class="w-12 h-12 rounded-full border border-[#444] flex items-center justify-center mb-2">
+                                <i class="fas fa-camera text-[#a8c7fa] text-lg"></i>
+                            </div>
+                            <span class="text-xs">Scan</span>
+                        </label>
+                    </div>
                 </div>
             </div>
+
+            <!-- 7. Bottom Navigation -->
+            <div class="bottom-nav">
+                <div class="nav-item">
+                    <i class="fas fa-home text-lg mb-1"></i>
+                    <span>Home</span>
+                </div>
+                <div class="nav-item">
+                    <i class="fas fa-star text-lg mb-1"></i>
+                    <span>Starred</span>
+                </div>
+                <div class="nav-item">
+                    <i class="fas fa-user-group text-lg mb-1"></i>
+                    <span>Shared</span>
+                </div>
+                <div class="nav-item active">
+                    <div class="nav-pill">
+                         <i class="fas fa-folder text-lg"></i>
+                    </div>
+                    <span>Files</span>
+                </div>
+            </div>
+
+            <!-- Upload Progress Overlay -->
+            <div v-if="uploading" class="fixed bottom-20 left-4 right-4 bg-[#2d2f31] p-4 rounded-xl shadow-lg border border-[#444] z-50">
+                <div class="flex justify-between mb-2">
+                    <span class="font-bold text-sm text-white">Uploading...</span>
+                    <span class="text-sm text-[#a8c7fa]">{{ uploadProgress }}%</span>
+                </div>
+                <div class="w-full bg-[#1e1e1e] rounded-full h-1">
+                    <div class="bg-[#a8c7fa] h-1 rounded-full transition-all duration-300" :style="{ width: uploadProgress + '%' }"></div>
+                </div>
+            </div>
+
+            <!-- Create Folder Modal -->
+            <div v-if="showCreateFolder" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50" @click.self="showCreateFolder = false">
+                <div class="bg-[#1e1e1e] p-6 rounded-2xl shadow-lg w-80">
+                    <h3 class="font-medium text-lg mb-4 text-[#e3e3e3]">New folder</h3>
+                    <input v-model="newFolderName" type="text" class="w-full bg-[#131314] text-white p-3 rounded border border-[#a8c7fa] mb-6 focus:outline-none" placeholder="Untitled folder" @keyup.enter="createFolder" ref="folderInput">
+                    <div class="flex justify-end space-x-6">
+                        <button @click="showCreateFolder = false" class="text-[#a8c7fa] font-medium text-sm">Cancel</button>
+                        <button @click="createFolder" class="text-[#a8c7fa] font-medium text-sm">Create</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Item Options Modal (Bottom Sheet) -->
+            <div v-if="selectedItem" class="fixed inset-0 z-50 flex items-end justify-center bg-black/50" @click.self="selectedItem = null">
+                <div class="bg-[#1e1e1e] w-full rounded-t-2xl p-4 shadow-2xl animate-slide-up max-h-[70vh] overflow-y-auto">
+                    <div class="flex items-center p-4 border-b border-[#2d2f31] mb-2">
+                        <i :class="selectedItem.type === 'folder' ? 'fas fa-folder text-[#e8eaed]' : getFileIcon(selectedItem.name)" class="text-2xl mr-4"></i>
+                        <div class="overflow-hidden">
+                            <div class="font-medium truncate">{{ selectedItem.name }}</div>
+                            <div class="text-xs text-[#c4c7c5]">{{ selectedItem.type === 'folder' ? 'Folder' : formatSize(selectedItem.size) }}</div>
+                        </div>
+                    </div>
+
+                    <div class="space-y-1">
+                        <button @click="downloadFile(selectedItem)" v-if="selectedItem.type !== 'folder'" class="w-full flex items-center p-3 hover:bg-[#2d2f31] rounded-lg text-left">
+                            <i class="fas fa-download w-8 text-[#c4c7c5]"></i>
+                            <span>Download</span>
+                        </button>
+                        <button class="w-full flex items-center p-3 hover:bg-[#2d2f31] rounded-lg text-left">
+                            <i class="fas fa-pen w-8 text-[#c4c7c5]"></i>
+                            <span>Rename</span>
+                        </button>
+                        <button class="w-full flex items-center p-3 hover:bg-[#2d2f31] rounded-lg text-left">
+                            <i class="fas fa-star w-8 text-[#c4c7c5]"></i>
+                            <span>Add to Starred</span>
+                        </button>
+                        <button @click="deleteItem(selectedItem.id); selectedItem = null" class="w-full flex items-center p-3 hover:bg-[#2d2f31] rounded-lg text-left text-red-400">
+                            <i class="fas fa-trash w-8"></i>
+                            <span>Remove</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
     <script src="app.js"></script>

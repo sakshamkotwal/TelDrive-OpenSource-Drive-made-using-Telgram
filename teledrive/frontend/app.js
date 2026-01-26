@@ -1,13 +1,10 @@
-const { createApp, ref, computed, onMounted, reactive, watch } = Vue;
+const { createApp, ref, computed, onMounted, reactive, watch, nextTick } = Vue;
 
 async function deriveKeyHex(password, salt) {
     const enc = new TextEncoder();
     const keyMaterial = await window.crypto.subtle.importKey(
         "raw", enc.encode(password), {name: "PBKDF2"}, false, ["deriveBits"]
     );
-    // Salt logic: for MVP we use a fixed salt prefix + channelID if available, or just fixed.
-    // To ensure portability, let's use a fixed salt for now: "teledrive_secure_salt"
-    // In production, salt should be unique per drive.
     const derivedBits = await window.crypto.subtle.deriveBits(
         {
             name: "PBKDF2",
@@ -41,12 +38,15 @@ createApp({
         const loadingFiles = ref(false);
         const searchQuery = ref('');
         const showCreateFolder = ref(false);
+        const showUploadMenu = ref(false);
+        const selectedItem = ref(null);
         const newFolderName = ref('');
+        const folderInput = ref(null);
 
         const uploading = ref(false);
         const uploadProgress = ref(0);
+        const sortOrder = ref('asc');
 
-        // Navigation history for breadcrumbs
         const path = ref([]);
 
         // Computed
@@ -58,21 +58,29 @@ createApp({
             if (!searchQuery.value) return folders.value;
             return folders.value.filter(f => f.name.toLowerCase().includes(searchQuery.value.toLowerCase()));
         });
+        const filteredItems = computed(() => {
+            return [...filteredFolders.value, ...filteredFiles.value];
+        });
         const breadcrumbs = computed(() => path.value);
 
-        // Check if we are already logged in
         if (session.channelId && session.encryptionKey) {
             session.ready = true;
             fetchFiles();
         }
 
         // Methods
+        function toggleSort() {
+            sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc';
+            // Simple sort logic
+            const modifier = sortOrder.value === 'asc' ? 1 : -1;
+            files.value.sort((a, b) => a.name.localeCompare(b.name) * modifier);
+            folders.value.sort((a, b) => a.name.localeCompare(b.name) * modifier);
+        }
+
         async function verifyChannel() {
             loading.value = true;
             error.value = '';
             try {
-                // Verify against backend
-                // Note: verification endpoint doesn't need auth, just checks bot access
                 const res = await fetch(`/api/setup/verify?channel_id=${form.channelId}`, { method: 'POST' });
                 if (!res.ok) throw new Error((await res.json()).detail);
 
@@ -91,13 +99,6 @@ createApp({
             error.value = '';
             try {
                 const key = await deriveKeyHex(form.password, "teledrive_salt_" + session.channelId);
-                // We don't verify against server here strictly (stateless),
-                // but we can try to fetch files. If fails (decryption or bad request), then wrong password?
-                // Actually server doesn't verify key on list_files (dataset not encrypted).
-                // So list_files works even with wrong key!
-                // Key is only verified when downloading/uploading.
-                // We'll assume success for now.
-
                 session.encryptionKey = key;
                 sessionStorage.setItem('teledrive_key', key);
                 session.ready = true;
@@ -124,9 +125,8 @@ createApp({
                     ? `/api/files?folder_id=${folderId}`
                     : '/api/files';
 
-                // Add timeout to prevent infinite loading
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
 
                 const res = await fetch(url, {
                     headers: {
@@ -139,8 +139,10 @@ createApp({
 
                 if (!res.ok) throw new Error("Failed to fetch files");
                 const data = await res.json();
-                files.value = data.files;
-                folders.value = data.folders;
+
+                // Add type property for easier rendering
+                files.value = data.files.map(f => ({...f, type: 'file'}));
+                folders.value = data.folders.map(f => ({...f, type: 'folder'}));
                 currentFolderId.value = folderId;
             } catch (e) {
                 console.error(e);
@@ -154,16 +156,14 @@ createApp({
             if (folderId === null) {
                 path.value = [];
             } else {
-                // Find folder name
                 const folder = folders.value.find(f => f.id === folderId);
-                // If not in current list, maybe we can't find name easily without full tree.
-                // For MVP, we just push valid folder.
                 if (folder) path.value.push(folder);
             }
             fetchFiles(folderId);
         }
 
         async function handleUpload(event) {
+            showUploadMenu.value = false;
             const fileList = event.target.files;
             if (!fileList.length) return;
 
@@ -178,7 +178,6 @@ createApp({
                         formData.append('parent_id', currentFolderId.value);
                     }
 
-                    // We use XMLHttpRequest for progress
                     await new Promise((resolve, reject) => {
                         const xhr = new XMLHttpRequest();
                         xhr.open('POST', '/api/files/upload');
@@ -232,6 +231,15 @@ createApp({
             }
         }
 
+        function showCreateFolderModal() {
+            showUploadMenu.value = false;
+            showCreateFolder.value = true;
+            nextTick(() => {
+                // Focus input
+                if(folderInput.value) folderInput.value.focus();
+            });
+        }
+
         async function createFolder() {
             if (!newFolderName.value) return;
             try {
@@ -258,7 +266,7 @@ createApp({
         }
 
         async function deleteItem(itemId) {
-            if(!confirm("Are you sure?")) return;
+            if(!confirm("Are you sure you want to delete this item?")) return;
             try {
                 const res = await fetch(`/api/items/${itemId}`, {
                     method: 'DELETE',
@@ -274,14 +282,25 @@ createApp({
             }
         }
 
+        function showItemOptions(item) {
+            selectedItem.value = item;
+        }
+
+        function previewFile(file) {
+            // For now just download or show options
+            showItemOptions(file);
+        }
+
         function getFileIcon(filename) {
             const ext = filename.split('.').pop().toLowerCase();
-            if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) return 'fas fa-image text-purple-500';
-            if (['pdf'].includes(ext)) return 'fas fa-file-pdf text-red-500';
-            if (['zip', 'rar', '7z'].includes(ext)) return 'fas fa-file-archive text-yellow-600';
-            if (['mp4', 'mov'].includes(ext)) return 'fas fa-video text-pink-500';
-            if (['mp3', 'wav'].includes(ext)) return 'fas fa-music text-green-500';
-            return 'fas fa-file text-gray-400';
+            if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) return 'fas fa-image text-[#ea4335]'; // Google uses red/orange for images
+            if (['pdf'].includes(ext)) return 'fas fa-file-pdf text-[#ea4335]';
+            if (['zip', 'rar', '7z'].includes(ext)) return 'fas fa-file-archive text-[#fbbc04]';
+            if (['mp4', 'mov'].includes(ext)) return 'fas fa-video text-[#ea4335]';
+            if (['mp3', 'wav'].includes(ext)) return 'fas fa-music text-[#34a853]';
+            if (['doc', 'docx'].includes(ext)) return 'fas fa-file-word text-[#4285f4]';
+            if (['xls', 'xlsx'].includes(ext)) return 'fas fa-file-excel text-[#34a853]';
+            return 'fas fa-file text-[#4285f4]'; // Default blue
         }
 
         function formatSize(bytes) {
@@ -292,14 +311,23 @@ createApp({
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
 
+        function formatDate(timestamp) {
+             if (!timestamp) return '';
+             const date = new Date(timestamp * 1000);
+             const options = { month: 'short', day: 'numeric' };
+             return date.toLocaleDateString('en-US', options);
+        }
+
         return {
             session, step, form, error, loading,
             files, folders, loadingFiles, currentFolderId,
-            filteredFiles, filteredFolders, breadcrumbs, searchQuery,
-            showCreateFolder, newFolderName, uploading, uploadProgress,
+            filteredFiles, filteredFolders, filteredItems, breadcrumbs, searchQuery,
+            showCreateFolder, showUploadMenu, selectedItem, newFolderName, folderInput,
+            uploading, uploadProgress,
             verifyChannel, login, logout, navigate,
             handleUpload, downloadFile, createFolder, deleteItem,
-            getFileIcon, formatSize
+            showCreateFolderModal, showItemOptions, previewFile,
+            getFileIcon, formatSize, formatDate, toggleSort
         }
     }
 }).mount('#app');
