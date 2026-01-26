@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teledrive</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-screen">
+    <div id="app" class="container mx-auto p-4">
+        <!-- Setup / Login Screen -->
+        <div v-if="!session.ready" class="max-w-md mx-auto mt-20 bg-white p-8 rounded-lg shadow-lg">
+            <h1 class="text-3xl font-bold mb-6 text-blue-600 text-center">Teledrive</h1>
+
+            <!-- Step 1: Channel ID -->
+            <div v-if="step === 1">
+                <p class="mb-4 text-gray-600">Enter your Private Channel ID to access your drive.</p>
+                <div class="mb-4">
+                    <label class="block text-sm font-bold mb-2">Channel ID</label>
+                    <input v-model="form.channelId" type="text" placeholder="-100..." class="w-full p-2 border rounded">
+                    <p class="text-xs text-gray-400 mt-1">Check the README on how to get this ID.</p>
+                </div>
+                <button @click="verifyChannel" class="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700" :disabled="loading">
+                    <span v-if="loading"><i class="fas fa-spinner fa-spin"></i> Verifying...</span>
+                    <span v-else>Next</span>
+                </button>
+            </div>
+
+            <!-- Step 2: Password -->
+            <div v-if="step === 2">
+                <p class="mb-4 text-gray-600">Enter your drive password.</p>
+                <div class="mb-4">
+                    <label class="block text-sm font-bold mb-2">Password</label>
+                    <input v-model="form.password" type="password" class="w-full p-2 border rounded" @keyup.enter="login">
+                </div>
+                <button @click="login" class="w-full bg-green-600 text-white p-2 rounded hover:bg-green-700" :disabled="loading">
+                    <span v-if="loading"><i class="fas fa-spinner fa-spin"></i> Unlocking...</span>
+                    <span v-else>Unlock Drive</span>
+                </button>
+            </div>
+
+            <div v-if="error" class="mt-4 text-red-500 text-sm">{{ error }}</div>
+        </div>
+
+        <!-- Main Drive Interface -->
+        <div v-else class="bg-white rounded-lg shadow-lg min-h-[80vh] flex flex-col">
+            <!-- Header -->
+            <div class="p-4 border-b flex justify-between items-center bg-gray-50 rounded-t-lg">
+                <div class="flex items-center space-x-2">
+                    <i class="fas fa-cloud text-blue-600 text-xl"></i>
+                    <span class="font-bold text-lg">Teledrive</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="relative">
+                        <input v-model="searchQuery" type="text" placeholder="Search files..." class="pl-8 pr-4 py-1 border rounded-full text-sm">
+                        <i class="fas fa-search absolute left-3 top-2 text-gray-400 text-xs"></i>
+                    </div>
+                    <button @click="logout" class="text-gray-500 hover:text-red-500"><i class="fas fa-sign-out-alt"></i></button>
+                </div>
+            </div>
+
+            <!-- Toolbar & Breadcrumbs -->
+            <div class="p-4 border-b flex justify-between items-center">
+                <div class="flex items-center space-x-2 text-sm text-gray-600">
+                    <button @click="navigate(null)" class="hover:text-blue-600"><i class="fas fa-home"></i> Home</button>
+                    <template v-for="(folder, index) in breadcrumbs" :key="folder.id">
+                        <span>/</span>
+                        <button @click="navigate(folder.id)" class="hover:text-blue-600">{{ folder.name }}</button>
+                    </template>
+                </div>
+                <div class="flex space-x-2">
+                    <button @click="showCreateFolder = true" class="px-3 py-1 border rounded hover:bg-gray-100 text-sm">
+                        <i class="fas fa-folder-plus"></i> New Folder
+                    </button>
+                    <label class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm cursor-pointer">
+                        <i class="fas fa-upload"></i> Upload
+                        <input type="file" class="hidden" @change="handleUpload" multiple>
+                    </label>
+                </div>
+            </div>
+
+            <!-- File List -->
+            <div class="flex-1 p-4 overflow-auto">
+                <div v-if="loadingFiles" class="text-center py-10 text-gray-400">
+                    <i class="fas fa-spinner fa-spin fa-2x"></i>
+                </div>
+
+                <div v-else-if="filteredItems.length === 0" class="text-center py-20 text-gray-400">
+                    <i class="fas fa-folder-open fa-3x mb-4"></i>
+                    <p>This folder is empty</p>
+                </div>
+
+                <div v-else class="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                    <!-- Folders -->
+                    <div v-for="folder in filteredFolders" :key="folder.id"
+                         @click="navigate(folder.id)"
+                         class="p-4 border rounded hover:bg-blue-50 cursor-pointer flex flex-col items-center justify-center text-center transition">
+                        <i class="fas fa-folder text-yellow-400 text-4xl mb-2"></i>
+                        <span class="text-sm font-medium truncate w-full">{{ folder.name }}</span>
+                        <div class="mt-2 opacity-0 hover:opacity-100 group-hover:opacity-100">
+                             <button @click.stop="deleteItem(folder.id)" class="text-red-400 hover:text-red-600"><i class="fas fa-trash"></i></button>
+                        </div>
+                    </div>
+
+                    <!-- Files -->
+                    <div v-for="file in filteredFiles" :key="file.id"
+                         class="p-4 border rounded hover:bg-gray-50 flex flex-col items-center justify-center text-center relative group">
+                        <i :class="getFileIcon(file.name)" class="text-4xl mb-2"></i>
+                        <span class="text-sm font-medium truncate w-full">{{ file.name }}</span>
+                        <span class="text-xs text-gray-400">{{ formatSize(file.size) }}</span>
+
+                        <div class="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition">
+                            <button @click="downloadFile(file)" class="text-blue-500 hover:text-blue-700 bg-white rounded-full p-1 shadow"><i class="fas fa-download"></i></button>
+                            <button @click="deleteItem(file.id)" class="text-red-500 hover:text-red-700 bg-white rounded-full p-1 shadow"><i class="fas fa-trash"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Upload Progress -->
+            <div v-if="uploading" class="fixed bottom-4 right-4 bg-white p-4 rounded shadow-lg border w-80">
+                <div class="flex justify-between mb-2">
+                    <span class="font-bold text-sm">Uploading...</span>
+                    <span class="text-sm">{{ uploadProgress }}%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <div class="bg-blue-600 h-2.5 rounded-full" :style="{ width: uploadProgress + '%' }"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Create Folder Modal -->
+        <div v-if="showCreateFolder" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+            <div class="bg-white p-6 rounded shadow-lg w-80">
+                <h3 class="font-bold mb-4">New Folder</h3>
+                <input v-model="newFolderName" type="text" class="w-full border p-2 rounded mb-4" placeholder="Folder Name" @keyup.enter="createFolder">
+                <div class="flex justify-end space-x-2">
+                    <button @click="showCreateFolder = false" class="px-4 py-2 text-gray-600">Cancel</button>
+                    <button @click="createFolder" class="px-4 py-2 bg-blue-600 text-white rounded">Create</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
