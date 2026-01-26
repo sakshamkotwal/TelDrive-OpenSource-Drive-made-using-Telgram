@@ -124,12 +124,19 @@ createApp({
                     ? `/api/files?folder_id=${folderId}`
                     : '/api/files';
 
+                // Add timeout to prevent infinite loading
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+
                 const res = await fetch(url, {
                     headers: {
                         'X-Channel-ID': session.channelId,
                         'X-Encryption-Key': session.encryptionKey
-                    }
+                    },
+                    signal: controller.signal
                 });
+                clearTimeout(timeoutId);
+
                 if (!res.ok) throw new Error("Failed to fetch files");
                 const data = await res.json();
                 files.value = data.files;
@@ -137,7 +144,7 @@ createApp({
                 currentFolderId.value = folderId;
             } catch (e) {
                 console.error(e);
-                error.value = e.message;
+                error.value = e.name === 'AbortError' ? "Request timed out" : e.message;
             } finally {
                 loadingFiles.value = false;
             }

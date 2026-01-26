@@ -18,6 +18,7 @@ class DriveManager:
         self.tg = telegram_client
         self.channel_id = channel_id
         self.dataset: Optional[DriveDataset] = None
+        self.dataset_message_id: Optional[int] = None
         self.dataset_lock = asyncio.Lock()
 
     async def ensure_initialized(self):
@@ -34,6 +35,8 @@ class DriveManager:
             # Download dataset
             logger.info("Found pinned dataset, downloading...")
             file_id = pinned.document.file_id
+            # Ensure we track the message ID
+            self.dataset_message_id = pinned.message_id
             data = await self.tg.download_file(file_id)
             try:
                 json_data = json.loads(data.decode('utf-8'))
@@ -45,9 +48,7 @@ class DriveManager:
         else:
             logger.info("No pinned dataset found. Initializing new one.")
             self.dataset = DriveDataset(last_updated=time.time())
-            # We don't save immediately here to avoid circular logic or extra calls,
-            # but if it's new, we should probably save it eventually.
-            # But caller usually modifies and saves.
+            self.dataset_message_id = None
             pass
 
     async def load_dataset(self):
@@ -63,17 +64,20 @@ class DriveManager:
         # Serialize
         data = self.dataset.model_dump_json().encode('utf-8')
 
-        # Upload and pin
-        # We need to unpin the old one? send_document(..., pin=True) isn't atomic replace.
-        # But we can just pin the new one, and maybe clean up old ones later.
-        # telegram_bot.upload_dataset does upload + pin.
+        if self.dataset_message_id:
+            try:
+                logger.info(f"Editing existing dataset message {self.dataset_message_id}")
+                # Try to edit existing message
+                msg = await self.tg.edit_dataset_file(self.channel_id, self.dataset_message_id, data)
+                self.dataset_message_id = msg.message_id
+                return
+            except Exception as e:
+                logger.warning(f"Failed to edit dataset message: {e}. Falling back to upload & pin.")
+                # Fallthrough to upload new
 
-        # Note: If we have the old pinned message ID, we could delete it after successful upload.
-        # But we don't track it explicitly in memory yet (except via load).
-        # Optimization: Track pinned message ID in DriveManager?
-
-        await self.tg.upload_dataset(self.channel_id, data)
-        # TODO: Delete old pinned message to keep channel clean
+        # Upload and pin (First time or fallback)
+        msg = await self.tg.upload_dataset(self.channel_id, data)
+        self.dataset_message_id = msg.message_id
 
     async def save_dataset(self):
         async with self.dataset_lock:
