@@ -46,6 +46,27 @@ class TelegramClient:
             logger.error(f"Error uploading dataset: {e}")
             raise e
 
+    async def edit_dataset_file(self, chat_id: int, message_id: int, data: bytes) -> telegram.Message:
+        """Edits the existing pinned message to replace the dataset file."""
+        try:
+            # In python-telegram-bot v20+, edit_message_media returns the edited Message.
+            # We use InputMediaDocument.
+            from telegram import InputMediaDocument
+            return await self.bot.edit_message_media(
+                chat_id=chat_id,
+                message_id=message_id,
+                media=InputMediaDocument(data, filename="teledrive_dataset.json", caption="Teledrive Dataset Source of Truth")
+            )
+        except RetryAfter as e:
+            logger.warning(f"Rate limited. Sleeping for {e.retry_after} seconds.")
+            await asyncio.sleep(e.retry_after)
+            return await self.edit_dataset_file(chat_id, message_id, data)
+        except TelegramError as e:
+            # If edit fails (e.g., message too old or deleted), we might need to fallback.
+            # Caller should handle this.
+            logger.error(f"Error editing dataset: {e}")
+            raise e
+
     async def download_file(self, file_id: str) -> bytes:
         """Downloads a file from Telegram (used for dataset or chunks)."""
         try:
