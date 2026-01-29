@@ -1,74 +1,108 @@
 # Teledrive
 
-Teledrive is a self-hostable cloud drive that uses Telegram private channels as the storage backend and pinned messages as the dataset source of truth.
+Teledrive is a production-ready, self-hostable cloud drive that turns **Telegram Private Channels** into unlimited, secure storage. It treats pinned messages as the file system's "source of truth", ensuring that your data remains portable and resilient.
 
-## Features
+## 🚀 Features
 
-- **Unlimited Storage**: Uses Telegram's cloud storage.
-- **Privacy**: Files are encrypted (AES-GCM) before upload using a client-side key derived from your password.
-- **Stateless**: The server is just a relay. All state is in Telegram.
-- **Web Interface**: Simple, modern Vue.js frontend.
-- **Parallel Upload/Download**: Fast chunked file transfer.
+*   **Unlimited Storage**: Leverages Telegram's cloud.
+*   **Virtual File System**: Supports nested folders, renaming, and moving files (metadata-only operations).
+*   **Secure**:
+    *   **AES-256-GCM Encryption**: Files are encrypted before upload.
+    *   **Stateless Server**: No database required. The server is a pass-through relay.
+    *   **Private**: Data resides only in your private Telegram channel.
+*   **High Performance**:
+    *   **Parallel Downloads**: Fetches multiple file chunks simultaneously.
+    *   **Chunked Uploads**: Handles large files efficiently.
+*   **Modern UI**:
+    *   **Mobile-First Design**: Responsive, dark-themed interface (Google Drive inspired).
+    *   **Real-time Feedback**: Toast notifications and progress updates.
+    *   **Search**: Full-text search across your drive.
 
-## Architecture
+## 🛠 Architecture
 
-1. **Client**: Vue.js SPA. Handles password input and key derivation.
-2. **Server**: FastAPI (Python). Handles chunking, encryption/decryption, and Telegram API communication.
-3. **Storage**: Telegram Private Channel.
-   - **Files**: Stored as a sequence of "Document" messages.
-   - **Metadata**: Stored as a JSON file pinned in the channel.
+1.  **Frontend**: Vanilla JS / Vue-like structure (lightweight). Handles key derivation and UI logic.
+2.  **Backend**: FastAPI (Python). Orchestrates chunking, encryption, and Telegram interactions.
+3.  **Storage Layer**:
+    *   **Telegram Private Channel**: The physical storage.
+    *   **Pinned Message**: The "File Allocation Table" (JSON dataset containing file paths, IDs, and metadata).
 
-## Deployment
+## 📦 Deployment
 
-### Prerequisites
-
-1. **Telegram Bot**:
-   - Talk to [@BotFather](https://t.me/BotFather) to create a new bot.
-   - Get the **Bot Token**.
-
-2. **Hosting**:
-   - You can host this on **Render**, **Railway**, **Fly.io**, or any VPS.
-   - Dockerfile is not provided but the app is standard Python.
+Teledrive is designed to be stateless, making it perfect for platforms like **Render**, **Railway**, or **Fly.io**.
 
 ### Environment Variables
 
 | Variable | Description |
-|----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | **Required**. The token from BotFather. |
-| `SECRET_KEY` | Secret key for server-side JWT signing (generate a random string). |
-| `PORT` | Port to run on (default 8000). |
+| :--- | :--- |
+| `TELEGRAM_BOT_TOKEN` | **Required**. Token from [@BotFather](https://t.me/BotFather). |
+| `SECRET_KEY` | **Required**. A random string for securing sessions. |
+| `PORT` | Optional. Defaults to `8000`. |
+| `LOG_LEVEL` | Optional. Defaults to `INFO` (set to `DEBUG` for verbose logs). |
 
-### Running Locally
+### Option A: Docker (Recommended)
 
-1. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+The repository includes a production-ready `Dockerfile`.
 
-2. Run the server:
-   ```bash
-   export TELEGRAM_BOT_TOKEN="your_token_here"
-   uvicorn teledrive.backend.main:app --reload
-   ```
+```bash
+docker build -t teledrive .
+docker run -p 8000:8000 -e TELEGRAM_BOT_TOKEN="xxx" -e SECRET_KEY="xxx" teledrive
+```
 
-3. Open `http://localhost:8000`.
+### Option B: Render.com
 
-### First Run Setup
+1.  Create a new **Web Service**.
+2.  Connect your repository.
+3.  Select **Docker** as the Runtime (or Python 3).
+4.  Set Environment Variables (`TELEGRAM_BOT_TOKEN`, `SECRET_KEY`).
+5.  Deploy.
 
-1. Open the app in your browser.
-2. It will ask for a **Channel ID**.
-3. Create a **New Private Channel** in Telegram.
-4. **Add your Bot** to the channel as an **Administrator** (needed to pin messages).
-5. Send any message to the channel and forward it to [@userinfobot](https://t.me/userinfobot) (or check URL) to get the Channel ID (usually starts with `-100`).
-6. Enter the Channel ID in Teledrive.
-7. Set a **Password**. This password is used to encrypt your files. **Do not lose it.**
+### Option C: Manual / VPS
 
-## Security Model
+1.  Install dependencies:
+    ```bash
+    pip install -r requirements.txt
+    ```
+2.  Run the server (using Procfile or direct command):
+    ```bash
+    uvicorn teledrive.backend.main:app --host 0.0.0.0 --port 8000
+    ```
 
-- **Files**: Encrypted using AES-256-GCM. The key is derived from your password using PBKDF2. The server does not persist the password or the key (it's kept in memory for the request duration via a stateless token/header mechanism).
-- **Metadata**: The directory structure is stored in the Telegram channel as a JSON file. Currently, metadata is **not encrypted** to allow for server-side search and listing, but file contents are.
-- **Access Control**: Access is restricted to those who know the Channel ID and the Password.
+## ⚡ First-Time Setup
 
-## Disclaimer
+1.  **Create a Telegram Bot**: Message [@BotFather](https://t.me/BotFather) to create a bot and get the token.
+2.  **Create a Private Channel**: Create a new Channel in Telegram.
+3.  **Add Bot as Admin**: Add your bot to the channel with "Post Messages", "Edit Messages", and "Pin Messages" permissions.
+4.  **Get Channel ID**:
+    *   Post a message in the channel.
+    *   Forward it to [@userinfobot](https://t.me/userinfobot) (or look at the link in Telegram Web).
+    *   The ID usually looks like `-100xxxxxxxxxx`.
+5.  **Launch Teledrive**: Open your deployed URL.
+6.  **Onboard**: Enter the Channel ID and choose a strong **Encryption Password**.
 
-This project is for educational purposes. Use at your own risk. Telegram may ban bots that abuse their API for mass storage.
+> **Note**: Your encryption password is **never stored** on the server. If you lose it, you lose access to your files.
+
+## 🛡 Security Model
+
+*   **Encryption**: File content is encrypted/decrypted on the server using a key derived from your password. The key exists in memory only during the request.
+*   **Metadata**: Directory structure is stored as a pinned JSON document in the channel.
+*   **Resilience**: The system uses atomic updates for the dataset. If an update fails, it rolls back or creates a new pinned checkpoint.
+
+## ❓ Troubleshooting
+
+### "Channel ID Invalid" or "Bot cannot access channel"
+*   Ensure the bot is an **Administrator** in the channel.
+*   Ensure the Channel ID starts with `-100`.
+*   Try sending a message to the channel from the bot manually to verify permissions.
+
+### "Decryption Failed"
+*   This usually means you entered the wrong **Encryption Password**.
+*   Teledrive cannot recover lost passwords. If lost, your files are permanently inaccessible.
+
+### "Upload Failed"
+*   Check your internet connection.
+*   Large files (>2GB) are split into chunks. If one chunk fails, the upload aborts.
+*   Ensure your Telegram Bot Token is valid.
+
+## ⚠️ Disclaimer
+
+This project is open-source software. Users are responsible for complying with Telegram's Terms of Service.

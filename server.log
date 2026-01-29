@@ -6,3 +6,7 @@ INFO:     127.0.0.1:39698 - "GET / HTTP/1.1" 200 OK
 INFO:     127.0.0.1:39698 - "GET /app.js HTTP/1.1" 200 OK
 INFO:     127.0.0.1:55322 - "GET /teledrive/frontend/index.html HTTP/1.1" 404 Not Found
 INFO:     127.0.0.1:45388 - "GET /teledrive/frontend/index.html HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49344 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49344 - "GET /style.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49354 - "GET /app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49344 - "POST /api/setup/verify?channel_id= HTTP/1.1" 422 Unprocessable Entity

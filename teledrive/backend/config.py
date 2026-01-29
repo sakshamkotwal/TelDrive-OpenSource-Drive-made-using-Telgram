@@ -15,7 +15,11 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
 
     # File handling
-    MAX_CHUNK_SIZE: int = 20 * 1024 * 1024  # 20 MB (safe limit for Telegram Bots)
+    MAX_CHUNK_SIZE: int = 10 * 1024 * 1024  # 10 MB (safe limit for memory and Telegram)
+    DOWNLOAD_BATCH_SIZE: int = 5 # Number of chunks to download in parallel
+
+    # Logging
+    LOG_LEVEL: str = "INFO"
 
     model_config = {
         "env_file": ".env",

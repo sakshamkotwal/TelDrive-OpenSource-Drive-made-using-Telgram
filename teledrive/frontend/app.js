@@ -46,8 +46,23 @@ createApp({
         const uploading = ref(false);
         const uploadProgress = ref(0);
         const sortOrder = ref('asc');
+        const toasts = ref([]);
+        let toastCounter = 0;
+        let searchTimer = null;
 
         const path = ref([]);
+
+        // Watch search
+        watch(searchQuery, (newVal) => {
+             if (searchTimer) clearTimeout(searchTimer);
+             searchTimer = setTimeout(() => {
+                 if (newVal.length > 0) {
+                     fetchFiles(null, newVal);
+                 } else {
+                     fetchFiles(currentFolderId.value);
+                 }
+             }, 300);
+        });
 
         // Computed
         const filteredFiles = computed(() => {
@@ -69,6 +84,14 @@ createApp({
         }
 
         // Methods
+        function showToast(message, type = 'info') {
+            const id = toastCounter++;
+            toasts.value.push({ id, message, type });
+            setTimeout(() => {
+                toasts.value = toasts.value.filter(t => t.id !== id);
+            }, 3000);
+        }
+
         function toggleSort() {
             sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc';
             // Simple sort logic
@@ -118,12 +141,15 @@ createApp({
             form.password = '';
         }
 
-        async function fetchFiles(folderId = null) {
+        async function fetchFiles(folderId = null, q = null) {
             loadingFiles.value = true;
             try {
-                const url = folderId
-                    ? `/api/files?folder_id=${folderId}`
-                    : '/api/files';
+                let url = '/api/files';
+                if (q) {
+                    url += `?q=${encodeURIComponent(q)}`;
+                } else if (folderId) {
+                    url += `?folder_id=${folderId}`;
+                }
 
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -156,8 +182,26 @@ createApp({
             if (folderId === null) {
                 path.value = [];
             } else {
-                const folder = folders.value.find(f => f.id === folderId);
-                if (folder) path.value.push(folder);
+                // If we are navigating "back" or "up", we should slice the path.
+                // But simplified logic: check if folder is already in path.
+                const existingIndex = path.value.findIndex(f => f.id === folderId);
+                if (existingIndex !== -1) {
+                    // Go back to that level
+                    path.value = path.value.slice(0, existingIndex + 1);
+                } else {
+                    // Find folder name from current list (folders.value)
+                    // If not found, it might be a child of current view?
+                    // Or we assume we are drilling down.
+                    const folder = folders.value.find(f => f.id === folderId);
+                    if (folder) {
+                        path.value.push(folder);
+                    } else {
+                        // Edge case: Navigating to a folder not in current list?
+                        // This happens if we deep link or after reload?
+                        // For MVP, we might lose breadcrumb name if we don't have full tree.
+                        // We can fetch folder info from backend if needed.
+                    }
+                }
             }
             fetchFiles(folderId);
         }
@@ -170,8 +214,12 @@ createApp({
             uploading.value = true;
             uploadProgress.value = 0;
 
+            // Show toast
+            showToast(`Uploading ${fileList.length} files...`, 'info');
+
             try {
-                for (let file of fileList) {
+                for (let i = 0; i < fileList.length; i++) {
+                    const file = fileList[i];
                     const formData = new FormData();
                     formData.append('file', file);
                     if (currentFolderId.value) {
@@ -186,28 +234,46 @@ createApp({
 
                         xhr.upload.onprogress = (e) => {
                             if (e.lengthComputable) {
+                                // Calculate total progress across all files?
+                                // For now just progress of current file is simple.
                                 uploadProgress.value = Math.round((e.loaded / e.total) * 100);
                             }
                         };
 
                         xhr.onload = () => {
-                            if (xhr.status >= 200 && xhr.status < 300) resolve();
-                            else reject(new Error(xhr.responseText));
+                            if (xhr.status >= 200 && xhr.status < 300) {
+                                resolve();
+                            } else {
+                                let errMsg = "Upload failed";
+                                try {
+                                    const resp = JSON.parse(xhr.responseText);
+                                    errMsg = resp.detail || errMsg;
+                                } catch (e) {}
+                                reject(new Error(errMsg));
+                            }
                         };
                         xhr.onerror = () => reject(new Error("Network Error"));
 
                         xhr.send(formData);
                     });
+
+                    showToast(`${file.name} uploaded`, 'success');
                 }
-                fetchFiles(currentFolderId.value);
+                // Refresh list immediately
+                await fetchFiles(currentFolderId.value);
+                showToast("All uploads complete", 'success');
             } catch (e) {
-                alert("Upload failed: " + e.message);
+                console.error(e);
+                showToast(e.message, 'error');
             } finally {
                 uploading.value = false;
+                // Clear file input so same file can be selected again
+                event.target.value = '';
             }
         }
 
         async function downloadFile(file) {
+            showToast("Starting download...", 'info');
             try {
                 const res = await fetch(`/api/files/download/${file.id}`, {
                     headers: {
@@ -215,19 +281,37 @@ createApp({
                         'X-Encryption-Key': session.encryptionKey
                     }
                 });
-                if (!res.ok) throw new Error("Download failed");
+
+                if (!res.ok) {
+                    let errMsg = "Download failed";
+                    try {
+                        const errJson = await res.json();
+                        errMsg = errJson.detail || errMsg;
+                    } catch(e) {}
+                    throw new Error(errMsg);
+                }
+
+                // Try to get filename from header if possible, else use file.name
+                let filename = file.name;
+                const disposition = res.headers.get('Content-Disposition');
+                if (disposition && disposition.includes('filename=')) {
+                     const match = disposition.match(/filename="?([^"]+)"?/);
+                     if (match && match[1]) filename = match[1];
+                }
 
                 const blob = await res.blob();
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = file.name;
+                a.download = filename;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
                 window.URL.revokeObjectURL(url);
+                showToast("Download started", 'success');
             } catch (e) {
-                alert(e.message);
+                console.error(e);
+                showToast(e.message, 'error');
             }
         }
 
@@ -327,7 +411,7 @@ createApp({
             verifyChannel, login, logout, navigate,
             handleUpload, downloadFile, createFolder, deleteItem,
             showCreateFolderModal, showItemOptions, previewFile,
-            getFileIcon, formatSize, formatDate, toggleSort
+            getFileIcon, formatSize, formatDate, toggleSort, toasts
         }
     }
 }).mount('#app');

@@ -64,20 +64,34 @@ class DriveManager:
         # Serialize
         data = self.dataset.model_dump_json().encode('utf-8')
 
-        if self.dataset_message_id:
+        # Retry logic for saving
+        for attempt in range(3):
             try:
-                logger.info(f"Editing existing dataset message {self.dataset_message_id}")
-                # Try to edit existing message
-                msg = await self.tg.edit_dataset_file(self.channel_id, self.dataset_message_id, data)
-                self.dataset_message_id = msg.message_id
-                return
+                if self.dataset_message_id:
+                    logger.info(f"Editing existing dataset message {self.dataset_message_id} (Attempt {attempt+1})")
+                    # Try to edit existing message
+                    msg = await self.tg.edit_dataset_file(self.channel_id, self.dataset_message_id, data)
+                    self.dataset_message_id = msg.message_id
+                    logger.info("Dataset saved successfully (Edited).")
+                    return
             except Exception as e:
-                logger.warning(f"Failed to edit dataset message: {e}. Falling back to upload & pin.")
-                # Fallthrough to upload new
+                logger.warning(f"Failed to edit dataset message: {e}. Checking if we should fallback...")
+                # If error is not retry-able or we want to try new pin:
+                if attempt == 2:
+                     logger.warning("Max retries for edit reached. Falling back to new pin.")
+                else:
+                    await asyncio.sleep(1)
+                    continue
 
-        # Upload and pin (First time or fallback)
-        msg = await self.tg.upload_dataset(self.channel_id, data)
-        self.dataset_message_id = msg.message_id
+        # Fallback: Upload and pin (First time or fallback after edits failed)
+        try:
+            logger.info("Uploading new dataset message...")
+            msg = await self.tg.upload_dataset(self.channel_id, data)
+            self.dataset_message_id = msg.message_id
+            logger.info("Dataset saved successfully (New Pin).")
+        except Exception as e:
+            logger.error(f"CRITICAL: Failed to save dataset: {e}")
+            raise e
 
     async def save_dataset(self):
         async with self.dataset_lock:
@@ -109,18 +123,27 @@ class DriveManager:
                     break
 
                 # Encrypt
-                ciphertext, iv, tag = encrypt_chunk(chunk_data, encryption_key)
+                try:
+                    ciphertext, iv, tag = encrypt_chunk(chunk_data, encryption_key)
+                except Exception as e:
+                    logger.error(f"Encryption failed for part {part_number}: {e}")
+                    raise RuntimeError("Encryption failed") from e
 
                 # Combine for storage: IV + Tag + Ciphertext
                 # IV is 12 bytes, Tag is 16 bytes.
                 blob = iv + tag + ciphertext
 
                 # Upload chunk
-                msg = await self.tg.upload_chunk(
-                    self.channel_id,
-                    blob,
-                    f"{file_entry.id}_p{part_number}.bin"
-                )
+                try:
+                    msg = await self.tg.upload_chunk(
+                        self.channel_id,
+                        blob,
+                        f"{file_entry.id}_p{part_number}.bin"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to upload chunk {part_number}: {e}")
+                    # Retrying is handled in telegram_bot.py, if it failed there, it's fatal.
+                    raise RuntimeError(f"Chunk upload failed: {e}") from e
 
                 # Record chunk
                 chunk_info = FileChunk(
@@ -132,6 +155,10 @@ class DriveManager:
 
                 part_number += 1
                 total_uploaded += len(chunk_data) # Original size
+
+            # Verify we actually uploaded something if size was expected > 0
+            if total_uploaded == 0 and size > 0:
+                logger.warning(f"Uploaded 0 bytes for file {filename} but expected {size}")
 
             # Update dataset
             async with self.dataset_lock:
@@ -145,14 +172,19 @@ class DriveManager:
                 self.dataset.files.append(file_entry)
                 await self._save_dataset_internal()
 
+            logger.info(f"File {filename} uploaded successfully. Size: {total_uploaded} bytes, Chunks: {part_number}")
             return file_entry
 
         except Exception as e:
-            logger.error(f"Upload failed: {e}")
-            # Rollback?
-            # We should probably delete uploaded chunks.
-            # But for now, we just don't add the file to the dataset, so it's "lost" (orphaned in Telegram).
-            # A cleanup job could find orphans.
+            logger.error(f"Upload failed for {filename}: {e}")
+            # Attempt best-effort cleanup of orphaned chunks
+            if file_entry.chunks:
+                logger.info("Cleaning up chunks from failed upload...")
+                for chunk in file_entry.chunks:
+                    try:
+                        await self.tg.delete_message(self.channel_id, chunk.message_id)
+                    except Exception as cleanup_err:
+                        logger.warning(f"Failed to delete orphaned chunk {chunk.message_id}: {cleanup_err}")
             raise e
 
     async def download_file(self, file_id: str, encryption_key: bytes) -> AsyncGenerator[bytes, None]:
@@ -177,20 +209,40 @@ class DriveManager:
         # Let's pre-fetch in batches.
 
         # Parallel download logic: Fetch in batches
-        batch_size = 5
+        # We process batches, but we must yield chunks in ORDER.
+        # asyncio.gather returns results in the order of tasks, which corresponds to our batch list.
+        # So order is preserved.
+
+        batch_size = settings.DOWNLOAD_BATCH_SIZE
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i:i+batch_size]
+            logger.debug(f"Downloading batch {i//batch_size} ({len(batch)} chunks) for file {file_id}")
+
             # Create tasks for the batch
             tasks = [self.tg.get_chunk_bytes(self.channel_id, c.message_id) for c in batch]
-            # Wait for all in batch to complete
-            results = await asyncio.gather(*tasks)
 
-            for raw_data in results:
+            try:
+                # Wait for all in batch to complete
+                results = await asyncio.gather(*tasks)
+            except Exception as e:
+                logger.error(f"Failed to download batch: {e}")
+                raise e
+
+            for idx, raw_data in enumerate(results):
+                if len(raw_data) < 28:
+                    logger.error(f"Chunk data too short (corrupt?): {len(raw_data)} bytes")
+                    raise ValueError("Chunk corrupted")
+
                 iv = raw_data[:12]
                 tag = raw_data[12:28]
                 ciphertext = raw_data[28:]
 
-                plaintext = decrypt_chunk(ciphertext, encryption_key, iv, tag)
+                try:
+                    plaintext = decrypt_chunk(ciphertext, encryption_key, iv, tag)
+                except Exception as e:
+                    logger.error(f"Decryption failed for chunk: {e}")
+                    raise RuntimeError("Decryption failed (Wrong password?)") from e
+
                 yield plaintext
 
     async def create_folder(self, name: str, parent_id: Optional[str] = None) -> TeledriveFolder:

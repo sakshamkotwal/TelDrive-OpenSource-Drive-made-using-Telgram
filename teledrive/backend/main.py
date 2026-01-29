@@ -14,8 +14,10 @@ from teledrive.backend.drive import DriveManager, get_drive_manager
 from teledrive.backend.models import TeledriveFile, TeledriveFolder
 
 # Logging setup
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=settings.LOG_LEVEL)
 logger = logging.getLogger(__name__)
+# Enable explicit logging for our package
+logging.getLogger("teledrive").setLevel(settings.LOG_LEVEL)
 
 # Global Drive Manager (to be initialized per request or global if single channel)
 # Since we support dynamic channel ID from session, we might need a factory.
@@ -107,17 +109,28 @@ async def verify_setup(channel_id: int):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/files")
-async def list_files(folder_id: Optional[str] = None, drive: DriveManager = Depends(get_drive)):
-    """Returns files and folders in the given folder."""
+async def list_files(
+    folder_id: Optional[str] = None,
+    q: Optional[str] = None,
+    drive: DriveManager = Depends(get_drive)
+):
+    """Returns files and folders. If q is provided, performs global search."""
     # Assuming dataset is loaded
     if drive.dataset is None:
         await drive.load_dataset()
 
     dataset = drive.dataset
-    files = [f for f in dataset.files if f.parent_id == folder_id]
-    folders = [f for f in dataset.folders if f.parent_id == folder_id]
 
-    # Enrich with some derived info if needed
+    if q:
+        # Global search
+        query = q.lower()
+        files = [f for f in dataset.files if query in f.name.lower()]
+        folders = [f for f in dataset.folders if query in f.name.lower()]
+    else:
+        # Folder view
+        files = [f for f in dataset.files if f.parent_id == folder_id]
+        folders = [f for f in dataset.folders if f.parent_id == folder_id]
+
     return {"files": files, "folders": folders}
 
 @app.post("/api/files/upload")
@@ -128,43 +141,23 @@ async def upload_file(
     key: bytes = Depends(get_encryption_key)
 ):
     try:
-        # We need to read file size? UploadFile has .size? No.
-        # But we can read chunk by chunk.
-        # We pass the stream.
-        # We assume size is unknown or we just count it.
-        # DriveManager.upload_file expects size?
-        # Actually `UploadFile` might not have size if chunked transfer.
-        # We can pass 0 or update logic to not require size upfront.
-        # Let's check `drive.py`. It takes `size`.
-        # We can try to get size from header `content-length` but it might be missing.
-        # Updated `drive.py` stores size in metadata. We can calculate it during upload.
-
-        # Determine filename
         filename = file.filename or "unnamed_file"
+        logger.info(f"Starting upload for file: {filename}")
 
-        # Workaround for size: We'll calculate it as we go.
-        # We pass 0 and update `file_entry.size` later?
-        # `drive.py`: `file_entry = TeledriveFile(..., size=size, ...)`
-        # We should modify `drive.py` to allow updating size at the end.
-
-        # For now, pass 0.
+        # Pass 0 as size, DriveManager updates it after upload
         uploaded_file = await drive.upload_file(
             file_stream=file,
             filename=filename,
-            size=0, # Placeholder
+            size=0,
             parent_id=parent_id,
             encryption_key=key
         )
 
-        # Fix size
-        # Wait, `drive.py` loop: `total_uploaded += len(chunk_data)`.
-        # `drive.py` doesn't update `file_entry.size`.
-        # We should fix `drive.py` to update size.
-
+        logger.info(f"Upload complete for {filename}. ID: {uploaded_file.id}")
         return uploaded_file
     except Exception as e:
-        logger.error(f"Upload error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Upload error for {file.filename}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @app.get("/api/files/download/{file_id}")
 async def download_file(

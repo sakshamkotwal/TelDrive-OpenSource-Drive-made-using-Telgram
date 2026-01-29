@@ -84,50 +84,47 @@ class TelegramClient:
 
     async def upload_chunk(self, chat_id: int, data: bytes, filename: str) -> telegram.Message:
         try:
-            return await self.bot.send_document(
+            logger.debug(f"Uploading chunk {filename} ({len(data)} bytes) to {chat_id}")
+            msg = await self.bot.send_document(
                 chat_id=chat_id,
                 document=data,
                 filename=filename,
                 disable_notification=True
             )
+            logger.debug(f"Chunk uploaded: message_id={msg.message_id}")
+            return msg
         except RetryAfter as e:
-            logger.warning(f"Rate limited. Sleeping for {e.retry_after} seconds.")
+            logger.warning(f"Rate limited uploading chunk. Sleeping for {e.retry_after} seconds.")
             await asyncio.sleep(e.retry_after)
             return await self.upload_chunk(chat_id, data, filename)
+        except Exception as e:
+            logger.error(f"Failed to upload chunk {filename}: {e}")
+            raise e
 
     async def get_chunk_bytes(self, chat_id: int, message_id: int) -> bytes:
         """Retrieves the file content from a message."""
         try:
-            # We can't get message by ID directly via bot API easily without `get_chat` context or implicitly?
-            # Actually, `forward_message` is one way, but we want to read it.
-            # `bot.get_messages` does not exist.
-            # But we can `forward_message` to a temp chat? No.
-            # Wait, `python-telegram-bot` doesn't have `get_message`?
-            # It does not. The Bot API does not have `get_message`.
-            # THIS IS A PROBLEM.
-            # Strategies:
-            # 1. Store `file_id` in the dataset, not just `message_id`.
-            #    `file_id` is persistent (mostly).
-            # 2. Forward the message to the same chat? returns a new message with the same content.
-            # 3. `file_id` is robust enough for long term?
-            #    "file_id can change over time". "It is recommended to use file_unique_id... but you can't download with it."
-            #    However, for a self-hosted drive, `file_id` usually lasts a long time.
-            #    BUT, if it expires, we need to refresh it. How?
-            #    If we have the `message_id`, we can Forward it to ourselves.
-            #    The forwarded message will have a fresh `file_id`.
-
-            # Implementation:
-            # Forward message_id from chat_id to chat_id.
-            # Get file_id from the new message.
-            # Download.
-            # Delete the forwarded message.
-
+            logger.debug(f"Fetching chunk from message {message_id} in {chat_id}")
+            # Forward message to self to get fresh file_id and valid download path
             forwarded = await self.bot.forward_message(chat_id=chat_id, from_chat_id=chat_id, message_id=message_id)
+
+            if not forwarded.document:
+                logger.error(f"Forwarded message {forwarded.message_id} has no document.")
+                await forwarded.delete()
+                raise TelegramError("Message has no document")
+
             file_id = forwarded.document.file_id
             data = await self.download_file(file_id)
+
+            # Cleanup
             await forwarded.delete()
+            logger.debug(f"Fetched chunk {message_id} successfully ({len(data)} bytes)")
             return data
 
+        except RetryAfter as e:
+             logger.warning(f"Rate limited fetching chunk. Sleeping for {e.retry_after} seconds.")
+             await asyncio.sleep(e.retry_after)
+             return await self.get_chunk_bytes(chat_id, message_id)
         except TelegramError as e:
             logger.error(f"Error fetching chunk {message_id}: {e}")
             raise e
